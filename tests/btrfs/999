@@ -1,0 +1,106 @@
+#! /bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (c) 2018 Lu Fengqi HERE.  All Rights Reserved.
+#
+# FS QA Test 999
+#
+#test btrfs subvolume undelete
+#
+#Create a subvolume first, and make snapshot of it. Then delete the snapshot
+#and try to undelete the deleted snapshot.
+#
+seq=`basename $0`
+seqres=$RESULT_DIR/$seq
+echo "QA output created by $seq"
+
+here=`pwd`
+tmp=/tmp/$$
+status=1	# failure is the default!
+trap "_cleanup; exit \$status" 0 1 2 3 15
+
+_cleanup()
+{
+	rm -f $tmp.*
+}
+
+# get standard environment, filters and checks
+. ./common/rc
+. ./common/filter
+. ./common/filter.btrfs
+
+# remove previous $seqres.full before test
+rm -f $seqres.full
+
+# real QA test starts here
+
+# Modify as appropriate.
+_supported_fs btrfs
+_supported_os Linux
+_require_scratch
+
+_scratch_mkfs > /dev/null 2>&1 || _fail "mkfs failed"
+_scratch_mount
+
+$BTRFS_UTIL_PROG subvolume create $SCRATCH_MNT/sub1 > /dev/null 2>&1
+for i in {1..100}; do
+	$XFS_IO_PROG -f -c "pwrite 0 1M" $SCRATCH_MNT/sub1/$i  > /dev/null 2>&1
+done
+
+SUBVOL_PREFIX=sub_
+
+$BTRFS_UTIL_PROG subvolume snapshot $SCRATCH_MNT/sub1 $SCRATCH_MNT/snap1 > /dev/null 2>&1
+SUBVOL_ID=$($BTRFS_UTIL_PROG subvolume list $SCRATCH_MNT | grep snap1 | cut -f2 -d' ')
+SUBVOL_NAME=${SUBVOL_PREFIX}${SUBVOL_ID}
+echo "normal undelete $SUBVOL_ID" >> "$seqres.full"
+$BTRFS_UTIL_PROG subvolume delete $SCRATCH_MNT/snap1 > /dev/null 2>&1
+$BTRFS_UTIL_PROG subvolume undelete -n $SUBVOL_NAME $SUBVOL_ID $SCRATCH_MNT >> "$seqres.full"
+[[ -e $SCRATCH_MNT/$SUBVOL_NAME ]] || _fail "undelete failed to recover $SCRATCH_MNT/$SUBVOL_NAME"
+$BTRFS_UTIL_PROG subvolume delete $SCRATCH_MNT/$SUBVOL_NAME > /dev/null 2>&1
+
+$BTRFS_UTIL_PROG subvolume snapshot $SCRATCH_MNT/sub1 $SCRATCH_MNT/snap1 > /dev/null 2>&1
+SUBVOL_ID=$($BTRFS_UTIL_PROG subvolume list $SCRATCH_MNT | grep snap1 | cut -f2 -d' ')
+SUBVOL_NAME=${SUBVOL_PREFIX}${SUBVOL_ID}
+echo "dir_dest undelete $SUBVOL_ID" >> "$seqres.full"
+$BTRFS_UTIL_PROG subvolume delete $SCRATCH_MNT/snap1 > /dev/null 2>&1
+mkdir $SCRATCH_MNT/dir_dest
+$BTRFS_UTIL_PROG subvolume undelete -n $SUBVOL_NAME $SUBVOL_ID $SCRATCH_MNT/dir_dest >> "$seqres.full"
+[[ -e $SCRATCH_MNT/dir_dest/$SUBVOL_NAME ]] || _fail "undelete failed to recover $SCRATCH_MNT/dir_dest/$SUBVOL_NAME"
+$BTRFS_UTIL_PROG subvolume delete $SCRATCH_MNT/dir_dest/$SUBVOL_NAME > /dev/null 2>&1
+
+$BTRFS_UTIL_PROG subvolume snapshot $SCRATCH_MNT/sub1 $SCRATCH_MNT/snap1 > /dev/null 2>&1
+SUBVOL_ID=$($BTRFS_UTIL_PROG subvolume list $SCRATCH_MNT | grep snap1 | cut -f2 -d' ')
+SUBVOL_NAME=${SUBVOL_PREFIX}${SUBVOL_ID}
+echo "sub_dest undelete $SUBVOL_ID" >> "$seqres.full"
+$BTRFS_UTIL_PROG subvolume delete $SCRATCH_MNT/snap1 > /dev/null 2>&1
+$BTRFS_UTIL_PROG subvolume create $SCRATCH_MNT/sub_dest > /dev/null 2>&1
+$BTRFS_UTIL_PROG subvolume undelete -n $SUBVOL_NAME $SUBVOL_ID $SCRATCH_MNT/sub_dest >> "$seqres.full"
+[[ -e $SCRATCH_MNT/sub_dest/$SUBVOL_NAME ]] || _fail "undelete failed to recover $SCRATCH_MNT/sub_dest/$SUBVOL_NAME"
+$BTRFS_UTIL_PROG subvolume delete $SCRATCH_MNT/sub_dest/$SUBVOL_NAME > /dev/null 2>&1
+
+$BTRFS_UTIL_PROG subvolume snapshot $SCRATCH_MNT/sub1 $SCRATCH_MNT/snap1 > /dev/null 2>&1
+SUBVOL_ID=$($BTRFS_UTIL_PROG subvolume list $SCRATCH_MNT | grep snap1 | cut -f2 -d' ')
+SUBVOL_NAME=${SUBVOL_PREFIX}${SUBVOL_ID}
+echo "dir conflict undelete $SUBVOL_ID" >> "$seqres.full"
+$BTRFS_UTIL_PROG subvolume delete $SCRATCH_MNT/snap1 > /dev/null 2>&1
+$BTRFS_UTIL_PROG subvolume undelete -n "dir_dest" $SUBVOL_ID $SCRATCH_MNT 2>> "$seqres.full"
+IS_EXIST=$($BTRFS_UTIL_PROG subvolume list $SCRATCH_MNT | grep dir_dest)
+[[ -z $IS_EXIST ]] || _fail "undelete should fail to recover $SCRATCH_MNT/dir_dest"
+
+$BTRFS_UTIL_PROG subvolume snapshot $SCRATCH_MNT/sub1 $SCRATCH_MNT/snap1 > /dev/null 2>&1
+SUB1_ID=$($BTRFS_UTIL_PROG subvolume list $SCRATCH_MNT | grep sub1 | cut -f2 -d' ')
+SUBVOL_ID=$($BTRFS_UTIL_PROG subvolume list $SCRATCH_MNT | grep snap1 | cut -f2 -d' ')
+SUBVOL_NAME=${SUBVOL_PREFIX}${SUBVOL_ID}
+$BTRFS_UTIL_PROG subvolume delete $SCRATCH_MNT/snap1 > /dev/null 2>&1
+$BTRFS_UTIL_PROG subvolume undelete -n $SUBVOL_NAME $SUB1_ID $SCRATCH_MNT 2>> "$seqres.full"
+IS_EXIST=$($BTRFS_UTIL_PROG subvolume list $SCRATCH_MNT | grep $SUBVOL_NAME)
+[[ -z $IS_EXIST ]] || _fail "undelete should fail to recover $SCRATCH_MNT/$SUBVOL_NAME"
+
+# optional stuff if your test has verbose output to help resolve problems
+#echo
+#echo "If failure, check $seqres.full (this) and $seqres.full.ok (reference)"
+
+echo "Silence is golden"
+
+# success, all done
+status=0
+exit
